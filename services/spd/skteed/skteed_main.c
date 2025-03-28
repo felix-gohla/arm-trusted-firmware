@@ -4,16 +4,10 @@
 * SPDX-License-Identifier: BSD-3-Clause
 */
 
+/**
+ * This dispatcher is heavily inspired by the tspd example.
+ */
 
-/*******************************************************************************
-* This is the Secure Payload Dispatcher (SPD). The dispatcher is meant to be a
-* plug-in component to the Secure Monitor, registered as a runtime service. The
-* SPD is expected to be a functional extension of the Secure Payload (SP) that
-* executes in Secure EL1. The Secure Monitor will delegate all SMCs targeting
-* the Trusted OS/Applications range to the dispatcher. The SPD will either
-* handle the request locally or delegate it to the Secure Payload. It is also
-* responsible for initialising and maintaining communication with the SP.
-******************************************************************************/
 #include <assert.h>
 #include <errno.h>
 #include <stddef.h>
@@ -361,32 +355,60 @@ static uintptr_t skteed_smc_handler(
 			// Set the entrypoint into the TEE.
 			// TODO: Find difference between fast and yielding entry.
 			cm_set_elr_el3(SECURE, (uint64_t)&skteed_vectors->fast_smc_entry);
+			set_yield_smc_active_flag(ctx->state);
 
 			// Route NS interrupts to EL3 during the call!
 			enable_intr_rm_local(INTR_TYPE_NS, SECURE);
 
 			ns_cpu_context = cm_get_context(NON_SECURE);
-			WARN("ctx: %p\n", ns_cpu_context);
 
 			// Restore the secure context.
 			cm_el1_sysregs_context_restore(SECURE);
 			// Make sure, we return in secure mode.
 			cm_set_next_eret_context(SECURE);
 			// Passing the registers to the TEE.
-			SMC_RET3(&ctx->cpu_ctx, smc_fid, x1, x2);
+			SMC_RET5(&ctx->cpu_ctx, smc_fid, x1, x2, x3, x4);
 		} else {
+			// Called from the secure world means that the call was done.
 			assert(handle == cm_get_context(SECURE));
 			cm_el1_sysregs_context_save(SECURE);
 			ns_cpu_context = cm_get_context(NON_SECURE);
 			assert(ns_cpu_context);
 
+			// Mark the call as done.
+			clr_yield_smc_active_flag(ctx->state);
+
 			/* Restore non-secure state */
 			cm_el1_sysregs_context_restore(NON_SECURE);
 			cm_set_next_eret_context(NON_SECURE);
-			SMC_RET3(ns_cpu_context, x1, x2, x3);
+			SMC_RET5(ns_cpu_context, SMC_OK, x1, x2, x3, x4);
 		}
 		assert(0); /* Unreachable */
 		break;
+	case SKTEED_SMC_RESUME:
+		// Only to be called from normal world.
+		if(!ns) {
+			assert(0);
+		}
+
+		assert(handle == cm_get_context(NON_SECURE));
+		// Check whether we we're really preempted.
+		// Note that this is not cleared in case of an interrupt.
+		if (!get_yield_smc_active_flag(ctx->state)) {
+			SMC_RET1(handle, SMC_UNK);
+		}
+		// Store the non-secure context.
+		cm_el1_sysregs_context_save(NON_SECURE);
+		set_yield_smc_active_flag(ctx->state);
+
+		// Route NS interrupts to EL3 during the call!
+		enable_intr_rm_local(INTR_TYPE_NS, SECURE);
+
+		// Resume from the preempted state.
+		cm_el1_sysregs_context_restore(SECURE);
+		cm_set_next_eret_context(SECURE);
+		SMC_RET0(&ctx->cpu_ctx);
+
 	default:
 		break;
 	}
