@@ -121,7 +121,8 @@ typedef struct skteed_context {
 typedef uint32_t skteed_vector_isn_t;
 
 typedef struct skteed_vectors {
-	tsp_vector_isn_t fast_smc_entry;
+	skteed_vector_isn_t yielding_smc_entry;
+	skteed_vector_isn_t fast_smc_entry;
 } skteed_vectors_t;
 
 /*******************************************************************************

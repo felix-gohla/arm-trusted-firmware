@@ -40,7 +40,7 @@ skteed_vectors_t *skteed_vectors;
 skteed_context_t skteed_sp_context[SKTEED_CORE_COUNT];
 
 
-/* TSP UID */
+/* UID which has a weird format. */
 DEFINE_SVC_UUID2(skteed_uuid,
 0xa056305b, 0x9132, 0x7b42, 0x98, 0x11,
 0x71, 0x68, 0xca, 0x50, 0xf3, 0xfb);
@@ -232,6 +232,7 @@ static uint64_t skteed_handle_sp_preemption(void *handle) {
 
 	assert(handle == cm_get_context(SECURE));
 	cm_el1_sysregs_context_save(SECURE);
+
 	/* Get a reference to the non-secure context */
 	ns_cpu_context = cm_get_context(NON_SECURE);
 	assert(ns_cpu_context);
@@ -298,7 +299,7 @@ static uintptr_t skteed_smc_handler(
 	void *handle,
 	u_register_t flags
 ) {
-	cpu_context_t *ns_cpu_context;
+	cpu_context_t *s_cpu_context, *ns_cpu_context;
 	uint32_t linear_id = plat_my_core_pos(), ns;
 	uint64_t rc;
 	skteed_context_t *ctx = &skteed_sp_context[linear_id];
@@ -350,28 +351,29 @@ static uintptr_t skteed_smc_handler(
 		assert(skteed_vectors);
 		if (ns) {
 			assert(handle == cm_get_context(NON_SECURE));
+			ns_cpu_context = cm_get_context(NON_SECURE);
+
 			// Store the non-secure context.
 			cm_el1_sysregs_context_save(NON_SECURE);
 			// Set the entrypoint into the TEE.
-			// TODO: Find difference between fast and yielding entry.
-			cm_set_elr_el3(SECURE, (uint64_t)&skteed_vectors->fast_smc_entry);
+			cm_set_elr_el3(SECURE, (uint64_t)&skteed_vectors->yielding_smc_entry);
 			set_yield_smc_active_flag(ctx->state);
 
 			// Route NS interrupts to EL3 during the call!
 			enable_intr_rm_local(INTR_TYPE_NS, SECURE);
-
-			ns_cpu_context = cm_get_context(NON_SECURE);
 
 			// Restore the secure context.
 			cm_el1_sysregs_context_restore(SECURE);
 			// Make sure, we return in secure mode.
 			cm_set_next_eret_context(SECURE);
 			// Passing the registers to the TEE.
-			SMC_RET5(&ctx->cpu_ctx, smc_fid, x1, x2, x3, x4);
+			SMC_RET18(&ctx->cpu_ctx, smc_fid, x1, x2, x3, x4, SMC_GET_GP(ns_cpu_context, CTX_GPREG_X5), SMC_GET_GP(ns_cpu_context, CTX_GPREG_X6), SMC_GET_GP(ns_cpu_context, CTX_GPREG_X7), SMC_GET_GP(ns_cpu_context, CTX_GPREG_X8), 0, 0, 0, 0, 0, 0, 0, 0, 0);
 		} else {
 			// Called from the secure world means that the call was done.
 			assert(handle == cm_get_context(SECURE));
 			cm_el1_sysregs_context_save(SECURE);
+			s_cpu_context = cm_get_context(SECURE);
+
 			ns_cpu_context = cm_get_context(NON_SECURE);
 			assert(ns_cpu_context);
 
@@ -381,7 +383,7 @@ static uintptr_t skteed_smc_handler(
 			/* Restore non-secure state */
 			cm_el1_sysregs_context_restore(NON_SECURE);
 			cm_set_next_eret_context(NON_SECURE);
-			SMC_RET5(ns_cpu_context, SMC_OK, x1, x2, x3, x4);
+			SMC_RET18(ns_cpu_context, SMC_OK, x1, x2, x3, x4, SMC_GET_GP(s_cpu_context, CTX_GPREG_X5), SMC_GET_GP(s_cpu_context, CTX_GPREG_X6), SMC_GET_GP(s_cpu_context, CTX_GPREG_X7), SMC_GET_GP(s_cpu_context, CTX_GPREG_X8), 0, 0, 0, 0, 0, 0, 0, 0, 0);
 		}
 		assert(0); /* Unreachable */
 		break;
