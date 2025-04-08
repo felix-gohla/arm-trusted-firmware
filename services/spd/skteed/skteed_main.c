@@ -16,7 +16,6 @@
 #include <arch_helpers.h>
 #include <bl31/bl31.h>
 #include <bl31/ehf.h>
-#include <bl32/tsp/tsp.h>
 #include <common/bl_common.h>
 #include <common/debug.h>
 #include <common/runtime_svc.h>
@@ -157,10 +156,12 @@ int32_t skteed_init(void)
 	cm_init_my_context(entry_point);
 
 	/*
-	 * Arrange for an entry into the test secure payload. It will be
-	 * returned via TSP_ENTRY_DONE case
+	 * Arrange for an entry into the secure payload. It will be
+	 * returned via the SKTEED_SMC_ENTRY_DONE case
 	 */
+	INFO("SKTEED initializing TEE OS\n");
 	rc = skteed_synchronous_sp_entry(ctx);
+	INFO("SKTEED initialized TEE OS\n");
 	assert(rc != 0);
 
 	return rc;
@@ -209,15 +210,7 @@ static int32_t skteed_setup(void) {
 		&skteed_sp_context[linear_id]
 	);
 
-// #if TSP_INIT_ASYNC
-// 	bl31_set_next_image_type(SECURE);
-// #else
-	/*
-	 * All TSPD initialization done. Now register our init function with
-	 * BL31 for deferred invocation
-	 */
 	bl31_register_bl32_init(&skteed_init);
-//#endif
 	return 0;
 }
 
@@ -346,6 +339,43 @@ static uintptr_t skteed_smc_handler(
 		SMC_UUID_RET(handle, skteed_uuid);
 		assert(0); /* Unreachable */
 		break;
+	case SKTEED_SMC_COPY_IPC:
+		/* We consider copying the IPC buffer as a blocking operation */
+		assert(skteed_vectors);
+		if (ns) {
+			assert(handle == cm_get_context(NON_SECURE));
+
+			// Store the non-secure context.
+			cm_el1_sysregs_context_save(NON_SECURE);
+			// Set the entrypoint into the TEE.
+			cm_set_elr_el3(SECURE, (uint64_t)&skteed_vectors->fast_smc_entry);
+
+			// Do not route NS interrupts to EL3 during the call!
+			disable_intr_rm_local(INTR_TYPE_NS, SECURE);
+
+			ns_cpu_context = cm_get_context(NON_SECURE);
+
+			// Restore the secure context.
+			cm_el1_sysregs_context_restore(SECURE);
+			// Make sure, we return in secure mode.
+			cm_set_next_eret_context(SECURE);
+			// Passing the registers to the TEE.
+			SMC_RET5(&ctx->cpu_ctx, smc_fid, x1, x2, x3, x4);
+		} else {
+			// Called from the secure world means that the call was done.
+			assert(handle == cm_get_context(SECURE));
+			cm_el1_sysregs_context_save(SECURE);
+			ns_cpu_context = cm_get_context(NON_SECURE);
+			assert(ns_cpu_context);
+
+			/* Restore non-secure state */
+			cm_el1_sysregs_context_restore(NON_SECURE);
+			cm_set_next_eret_context(NON_SECURE);
+			SMC_RET5(ns_cpu_context, SMC_OK, x1, x2, x3, x4);
+		}
+
+		assert(0); /* Unreachable */
+		break;
 	case SKTEED_SMC_LONGRUNNING:
 		// Initialization should already have happened.
 		assert(skteed_vectors);
@@ -355,19 +385,31 @@ static uintptr_t skteed_smc_handler(
 
 			// Store the non-secure context.
 			cm_el1_sysregs_context_save(NON_SECURE);
-			// Set the entrypoint into the TEE.
-			cm_set_elr_el3(SECURE, (uint64_t)&skteed_vectors->yielding_smc_entry);
-			set_yield_smc_active_flag(ctx->state);
 
 			// Route NS interrupts to EL3 during the call!
 			enable_intr_rm_local(INTR_TYPE_NS, SECURE);
 
-			// Restore the secure context.
-			cm_el1_sysregs_context_restore(SECURE);
-			// Make sure, we return in secure mode.
-			cm_set_next_eret_context(SECURE);
-			// Passing the registers to the TEE.
-			SMC_RET18(&ctx->cpu_ctx, smc_fid, x1, x2, x3, x4, SMC_GET_GP(ns_cpu_context, CTX_GPREG_X5), SMC_GET_GP(ns_cpu_context, CTX_GPREG_X6), SMC_GET_GP(ns_cpu_context, CTX_GPREG_X7), SMC_GET_GP(ns_cpu_context, CTX_GPREG_X8), 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+			if (!get_yield_smc_active_flag(ctx->state)) {
+				// Set the entrypoint into the TEE.
+				cm_set_elr_el3(SECURE, (uint64_t)&skteed_vectors->yielding_smc_entry);
+				set_yield_smc_active_flag(ctx->state);
+
+				// Restore the secure context.
+				cm_el1_sysregs_context_restore(SECURE);
+				// Make sure, we return in secure mode.
+				cm_set_next_eret_context(SECURE);
+				// Passing the registers to the TEE.
+				SMC_RET18(&ctx->cpu_ctx, smc_fid, x1, x2, x3, x4, SMC_GET_GP(ns_cpu_context, CTX_GPREG_X5), SMC_GET_GP(ns_cpu_context, CTX_GPREG_X6), SMC_GET_GP(ns_cpu_context, CTX_GPREG_X7), SMC_GET_GP(ns_cpu_context, CTX_GPREG_X8), 0, 0, 0, 0, 0, 0, 0, 0, 0);
+			} else {
+				set_yield_smc_active_flag(ctx->state);
+
+				// Resume from the preempted state.
+				cm_el1_sysregs_context_restore(SECURE);
+				cm_set_next_eret_context(SECURE);
+				SMC_RET0(&ctx->cpu_ctx);
+			}
+
 		} else {
 			// Called from the secure world means that the call was done.
 			assert(handle == cm_get_context(SECURE));
