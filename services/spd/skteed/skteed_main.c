@@ -386,10 +386,6 @@ static uintptr_t skteed_smc_handler(
 			// Store the non-secure context.
 			cm_el1_sysregs_context_save(NON_SECURE);
 
-			// Route NS interrupts to EL3 during the call!
-			enable_intr_rm_local(INTR_TYPE_NS, SECURE);
-
-
 			if (!get_yield_smc_active_flag(ctx->state)) {
 				// Set the entrypoint into the TEE.
 				cm_set_elr_el3(SECURE, (uint64_t)&skteed_vectors->yielding_smc_entry);
@@ -399,6 +395,10 @@ static uintptr_t skteed_smc_handler(
 				cm_el1_sysregs_context_restore(SECURE);
 				// Make sure, we return in secure mode.
 				cm_set_next_eret_context(SECURE);
+
+				// Route NS interrupts to EL3 during the call!
+				enable_intr_rm_local(INTR_TYPE_NS, SECURE);
+
 				// Passing the registers to the TEE.
 				SMC_RET18(&ctx->cpu_ctx, smc_fid, x1, x2, x3, x4, SMC_GET_GP(ns_cpu_context, CTX_GPREG_X5), SMC_GET_GP(ns_cpu_context, CTX_GPREG_X6), SMC_GET_GP(ns_cpu_context, CTX_GPREG_X7), SMC_GET_GP(ns_cpu_context, CTX_GPREG_X8), 0, 0, 0, 0, 0, 0, 0, 0, 0);
 			} else {
@@ -407,6 +407,10 @@ static uintptr_t skteed_smc_handler(
 				// Resume from the preempted state.
 				cm_el1_sysregs_context_restore(SECURE);
 				cm_set_next_eret_context(SECURE);
+
+				// Route NS interrupts to EL3 during the call!
+				enable_intr_rm_local(INTR_TYPE_NS, SECURE);
+
 				SMC_RET0(&ctx->cpu_ctx);
 			}
 
@@ -429,30 +433,6 @@ static uintptr_t skteed_smc_handler(
 		}
 		assert(0); /* Unreachable */
 		break;
-	case SKTEED_SMC_RESUME:
-		// Only to be called from normal world.
-		if(!ns) {
-			assert(0);
-		}
-
-		assert(handle == cm_get_context(NON_SECURE));
-		// Check whether we we're really preempted.
-		// Note that this is not cleared in case of an interrupt.
-		if (!get_yield_smc_active_flag(ctx->state)) {
-			SMC_RET1(handle, SMC_UNK);
-		}
-		// Store the non-secure context.
-		cm_el1_sysregs_context_save(NON_SECURE);
-		set_yield_smc_active_flag(ctx->state);
-
-		// Route NS interrupts to EL3 during the call!
-		enable_intr_rm_local(INTR_TYPE_NS, SECURE);
-
-		// Resume from the preempted state.
-		cm_el1_sysregs_context_restore(SECURE);
-		cm_set_next_eret_context(SECURE);
-		SMC_RET0(&ctx->cpu_ctx);
-
 	default:
 		break;
 	}
