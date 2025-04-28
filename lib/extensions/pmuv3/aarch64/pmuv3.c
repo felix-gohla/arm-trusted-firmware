@@ -81,8 +81,9 @@ void pmuv3_enable(cpu_context_t *ctx)
 	 * MDCR_EL3.TPM: Set to zero so that EL0, EL1, and EL2 System register
 	 *  accesses to all Performance Monitors registers do not trap to EL3.
 	 */
-	mdcr_el3_val = (mdcr_el3_val | MDCR_SCCD_BIT | MDCR_MCCD_BIT) &
-		  ~(MDCR_MPMX_BIT | MDCR_SPME_BIT | MDCR_TPM_BIT);
+	// Note: Modified as part of an experiment to count cycles.
+	mdcr_el3_val = (mdcr_el3_val | MDCR_SPME_BIT) &
+		  ~(MDCR_MPMX_BIT | MDCR_TPM_BIT | MDCR_MCCD_BIT | MDCR_SCCD_BIT);
 	mdcr_el3_val = mtpmu_disable_el3(mdcr_el3_val);
 
 	write_ctx_reg(state, CTX_MDCR_EL3, mdcr_el3_val);
@@ -164,8 +165,8 @@ void pmuv3_init_el2_unused(void)
 	 *  trapped to EL2.
 	 */
 	mdcr_el2 = (mdcr_el2 | MDCR_EL2_HLP_BIT | MDCR_EL2_HPMD_BIT |
-		    MDCR_EL2_HCCD_BIT) &
-		  ~(MDCR_EL2_HPME_BIT | MDCR_EL2_TPM_BIT | MDCR_EL2_TPMCR_BIT);
+		    MDCR_EL2_HCCD_BIT | MDCR_EL2_HPME_BIT) &
+		  ~(MDCR_EL2_TPM_BIT | MDCR_EL2_TPMCR_BIT);
 	mdcr_el2 = init_mdcr_el2_hpmn(mdcr_el2);
 	mdcr_el2 = mtpmu_disable_el2(mdcr_el2);
 	write_mdcr_el2(mdcr_el2);

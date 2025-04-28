@@ -293,9 +293,21 @@ static uintptr_t skteed_smc_handler(
 	u_register_t flags
 ) {
 	cpu_context_t *s_cpu_context, *ns_cpu_context;
-	uint32_t linear_id = plat_my_core_pos(), ns;
+	uint32_t linear_id, ns;
+	uint64_t cycles, instructions;
 	uint64_t rc;
-	skteed_context_t *ctx = &skteed_sp_context[linear_id];
+	skteed_context_t *ctx;
+
+	asm volatile(
+		"mrs %0, PMCCNTR_EL0\n"
+		"mrs %1, PMEVCNTR0_EL0\n"
+		"msr PMEVCNTR1_EL0, %0\n"
+		"msr PMEVCNTR2_EL0, %1\n"
+		: "=r"(cycles), "=r" (instructions)
+	);
+
+	linear_id = plat_my_core_pos();
+	ctx = &skteed_sp_context[linear_id];
 
 	/* Determine which security state this SMC originated from */
 	ns = is_caller_non_secure(flags);
@@ -431,6 +443,10 @@ static uintptr_t skteed_smc_handler(
 			cm_set_next_eret_context(NON_SECURE);
 			SMC_RET18(ns_cpu_context, SMC_OK, x1, x2, x3, x4, SMC_GET_GP(s_cpu_context, CTX_GPREG_X5), SMC_GET_GP(s_cpu_context, CTX_GPREG_X6), SMC_GET_GP(s_cpu_context, CTX_GPREG_X7), SMC_GET_GP(s_cpu_context, CTX_GPREG_X8), 0, 0, 0, 0, 0, 0, 0, 0, 0);
 		}
+		assert(0); /* Unreachable */
+		break;
+	case SKTEED_SMC_GET_CYCLES:
+		SMC_RET3(handle, SMC_OK, cycles, instructions);
 		assert(0); /* Unreachable */
 		break;
 	default:

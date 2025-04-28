@@ -475,7 +475,7 @@
 
 		mrs 	x15, pmcr_el0
 		orr	x15, x15, #PMCR_EL0_DP_BIT
-		msr	pmcr_el0, x15
+		mrs	x15, PMCCNTR_EL0 // hack to continue counting
 
 		mrs	x15, cptr_el3
 		orr	x15, x15, #CPTR_EZ_BIT
